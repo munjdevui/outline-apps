@@ -65,6 +65,8 @@ import '../views/root_view/root_navigation';
 // eslint-disable-next-line n/no-missing-import
 import '../views/appearance_view';
 // eslint-disable-next-line n/no-missing-import
+import '../views/kill_switch_view';
+// eslint-disable-next-line n/no-missing-import
 import * as i18n from '@outline/infrastructure/i18n';
 import {AppLocalizeBehavior} from '@polymer/app-localize-behavior/app-localize-behavior.js';
 import {PaperMenuButton} from '@polymer/paper-menu-button/paper-menu-button.js';
@@ -155,7 +157,8 @@ export class AppRoot extends mixinBehaviors(
           color: var(--outline-text-color);
         }
 
-        appearance-view {
+        appearance-view,
+        kill-switch-view {
           background-color: var(--outline-background);
           color: var(--outline-text-color);
         }
@@ -364,6 +367,12 @@ export class AppRoot extends mixinBehaviors(
             selected-appearance="[[selectedAppearance]]"
             localize="[[localize]]"
           ></appearance-view>
+          <kill-switch-view
+            name="kill-switch"
+            id="killSwitchView"
+            enabled="[[killSwitchEnabled]]"
+            localize="[[localize]]"
+          ></kill-switch-view>
         </iron-pages>
       </app-header-layout>
 
@@ -373,6 +382,7 @@ export class AppRoot extends mixinBehaviors(
         show-quit="[[shouldShowQuitButton]]"
         data-collection-page-url="https://getoutline.org/policies/data-collection"
         show-appearance-view="[[showAppearanceView]]"
+        show-kill-switch-view="[[showKillSwitchView]]"
       ></root-navigation>
 
       <add-access-key-dialog
@@ -597,6 +607,14 @@ export class AppRoot extends mixinBehaviors(
       },
       selectedAppearance: {
         type: String,
+      },
+      showKillSwitchView: {
+        type: Boolean,
+        value: false,
+      },
+      killSwitchEnabled: {
+        type: Boolean,
+        value: false,
       },
       darkMode: {
         type: Boolean,

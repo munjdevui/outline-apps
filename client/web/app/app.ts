@@ -204,6 +204,28 @@ export class App {
       );
     }
 
+    if (this.isWindowsDesktop()) {
+      this.rootEl.showKillSwitchView = true;
+      const killSwitchEnabled =
+        this.settings.get(SettingsKey.KILL_SWITCH) === 'true';
+      this.rootEl.killSwitchEnabled = killSwitchEnabled;
+      // Sync renderer preference to the Electron main process (also used at
+      // auto-connect time via a separate main-process store).
+      void this.syncKillSwitchToMain(killSwitchEnabled);
+      this.rootEl.addEventListener(
+        'SetKillSwitchRequested',
+        (event: CustomEvent) => {
+          const enabled = !!event.detail.enabled;
+          this.settings.set(
+            SettingsKey.KILL_SWITCH,
+            enabled ? 'true' : 'false'
+          );
+          this.rootEl.killSwitchEnabled = enabled;
+          void this.syncKillSwitchToMain(enabled);
+        }
+      );
+    }
+
     // Register handlers for events published to our event queue.
     this.eventQueue.subscribe(
       events.ServerAdded,
@@ -877,6 +899,31 @@ export class App {
 
   private isWindows() {
     return !('cordova' in window);
+  }
+
+  /** True for the Electron Windows desktop client only. */
+  private isWindowsDesktop() {
+    return (
+      typeof window !== 'undefined' &&
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).electron?.os?.platform === 'win32'
+    );
+  }
+
+  private async syncKillSwitchToMain(enabled: boolean): Promise<void> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const electron = (window as any).electron;
+      if (!electron?.methodChannel?.invoke) {
+        return;
+      }
+      await electron.methodChannel.invoke('set-kill-switch', enabled);
+    } catch (e) {
+      console.error(
+        'Failed to sync kill switch preference to main process:',
+        e
+      );
+    }
   }
 
   private setAppearance(appearance: Appearance) {

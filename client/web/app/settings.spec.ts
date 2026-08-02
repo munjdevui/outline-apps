@@ -76,6 +76,7 @@ describe('Settings', () => {
     expect(
       settings.isValidSetting(SettingsKey.VPN_WARNING_DISMISSED)
     ).toBeTruthy();
+    expect(settings.isValidSetting(SettingsKey.KILL_SWITCH)).toBeTruthy();
   });
 
   it('throws when setting an invalid key', () => {

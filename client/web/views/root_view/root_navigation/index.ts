@@ -27,6 +27,7 @@ export class RootNavigation extends LitElement {
   @property({type: String}) align: 'left' | 'right';
   @property({type: String}) dataCollectionPageUrl: string;
   @property({type: Boolean}) showAppearanceView: boolean = false;
+  @property({type: Boolean}) showKillSwitchView: boolean = false;
 
   static styles = css`
     :host {
@@ -246,6 +247,15 @@ export class RootNavigation extends LitElement {
                   <md-ripple></md-ripple>
                   <md-icon slot="start">brightness_medium</md-icon>
                   ${this.localize('appearance-page-title')}
+                </md-list-item>
+              `
+            : nothing}
+          ${this.showKillSwitchView
+            ? html`
+                <md-list-item @click=${() => this.changePage('kill-switch')}>
+                  <md-ripple></md-ripple>
+                  <md-icon slot="start">shield</md-icon>
+                  ${this.localize('kill-switch-page-title')}
                 </md-list-item>
               `
             : nothing}

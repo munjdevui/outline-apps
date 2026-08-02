@@ -37,13 +37,17 @@ namespace OutlineService
                 // To run as a service from the command-line:
                 // service.OnStart(null);
                 // System.Threading.Thread.Sleep(System.Threading.Timeout.Infinite);
-                if (args.Length < 2)
+                if (args.Length < 1)
                 {
                     ShowUsageAndExit();
                 }
                 switch (args[0])
                 {
                     case "on":
+                        if (args.Length < 2)
+                        {
+                            ShowUsageAndExit();
+                        }
                         service.ConfigureRouting(args[1], false);
                         break;
                     case "off":
@@ -52,6 +56,9 @@ namespace OutlineService
                             ShowUsageAndExit();
                         }
                         service.ResetRouting(args[1], Int32.Parse(args[2]));
+                        break;
+                    case "lockdown":
+                        service.EnterLockdown();
                         break;
                     default:
                         ShowUsageAndExit();
@@ -63,7 +70,7 @@ namespace OutlineService
 
         static void ShowUsageAndExit()
         {
-            Console.WriteLine("usage: on <proxy server ip>|off <proxy server ip> <default gateway interface index>");
+            Console.WriteLine("usage: on <proxy server ip>|off <proxy server ip> <default gateway interface index>|lockdown");
             Environment.Exit(1);
         }
     }

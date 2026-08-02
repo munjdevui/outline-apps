@@ -42,7 +42,17 @@ interface RoutingServiceResponse {
 enum RoutingServiceAction {
   CONFIGURE_ROUTING = 'configureRouting',
   RESET_ROUTING = 'resetRouting',
+  ENTER_LOCKDOWN = 'enterLockdown',
   STATUS_CHANGED = 'statusChanged',
+}
+
+export interface RoutingStopOptions {
+  /**
+   * When false and on Windows, ask OutlineService to enter kill-switch lockdown
+   * (block all traffic) instead of restoring the system routing table.
+   * Defaults to true (restore routing / allow internet).
+   */
+  releaseKillSwitch?: boolean;
 }
 
 enum RoutingServiceStatusCode {
@@ -55,7 +65,7 @@ enum RoutingServiceStatusCode {
 //
 // A minimal life-cycle is supported:
 //  - CONFIGURE_ROUTING is *always* the first message sent on the pipe.
-//  - The only subsequent supported operation is RESET_ROUTING.
+//  - Subsequent supported operations are RESET_ROUTING or ENTER_LOCKDOWN.
 //  - In the meantime, the client may receive zero or more STATUS_CHANGED events.
 //
 // That's it! This helps us connect to the service for *as short a time as possible*, which is
@@ -179,6 +189,7 @@ export class RoutingDaemon {
         }
         break;
       case RoutingServiceAction.RESET_ROUTING:
+      case RoutingServiceAction.ENTER_LOCKDOWN:
         // TODO: examine statusCode
         if (this.socket) {
           this.socket.end();
@@ -211,11 +222,11 @@ export class RoutingDaemon {
     return response;
   }
 
-  private async writeReset() {
+  private async writeAction(action: RoutingServiceAction) {
     return new Promise<void>((resolve, reject) => {
       const written = this.socket?.write(
         JSON.stringify({
-          action: RoutingServiceAction.RESET_ROUTING,
+          action,
           parameters: {},
         } as RoutingServiceRequest),
         err => {
@@ -234,9 +245,25 @@ export class RoutingDaemon {
 
   // stop() resolves when the stop command has been sent.
   // Use #onceDisconnected to be notified when the connection terminates.
-  async stop() {
+  //
+  // When releaseKillSwitch is false (Windows kill switch), the routing service
+  // enters lockdown instead of restoring internet access.
+  async stop(options: RoutingStopOptions = {}) {
+    const releaseKillSwitch = options.releaseKillSwitch !== false;
+    const stopAction = releaseKillSwitch
+      ? RoutingServiceAction.RESET_ROUTING
+      : RoutingServiceAction.ENTER_LOCKDOWN;
+
     if (!this.socket) {
-      // Never started.
+      // Never started, or the pipe already dropped. If kill switch should stay
+      // active, open a one-shot connection to enter lockdown.
+      if (!releaseKillSwitch && isWindows) {
+        try {
+          await sendRoutingServiceAction(stopAction);
+        } catch (e) {
+          console.error('failed to enter kill switch lockdown:', e);
+        }
+      }
       this.fulfillDisconnect();
       return;
     }
@@ -246,7 +273,7 @@ export class RoutingDaemon {
     }
     this.stopping = true;
 
-    return this.writeReset();
+    return this.writeAction(stopAction);
   }
 
   get onceDisconnected() {
@@ -262,6 +289,63 @@ export class RoutingDaemon {
     this.networkChangeListener = newListener;
   }
 }
+
+//#region one-shot routing service commands
+
+/**
+ * Sends a single action to OutlineService on a fresh pipe connection and waits
+ * for the matching response. Used when there is no active RoutingDaemon session
+ * (for example, to enter/leave kill-switch lockdown after an unexpected drop).
+ */
+function sendRoutingServiceAction(action: RoutingServiceAction): Promise<void> {
+  if (!isWindows) {
+    return Promise.reject(new Error('unsupported os'));
+  }
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(SERVICE_NAME, () => {
+      socket.once('data', data => {
+        socket.end();
+        try {
+          const message = JSON.parse(data.toString()) as RoutingServiceResponse;
+          if (
+            message.action === action &&
+            message.statusCode === RoutingServiceStatusCode.SUCCESS
+          ) {
+            resolve();
+          } else {
+            reject(
+              new Error(
+                message.errorMessage ||
+                  `routing service action ${action} failed`
+              )
+            );
+          }
+        } catch (e) {
+          reject(e);
+        }
+      });
+      socket.write(
+        JSON.stringify({
+          action,
+          parameters: {},
+        } as RoutingServiceRequest)
+      );
+    });
+    socket.once('error', reject);
+  });
+}
+
+/** Ask OutlineService to block all traffic (Windows kill switch lockdown). */
+export async function enterKillSwitchLockdown(): Promise<void> {
+  await sendRoutingServiceAction(RoutingServiceAction.ENTER_LOCKDOWN);
+}
+
+/** Restore system routing after kill switch lockdown. */
+export async function releaseKillSwitchLockdown(): Promise<void> {
+  await sendRoutingServiceAction(RoutingServiceAction.RESET_ROUTING);
+}
+
+//#endregion one-shot routing service commands
 
 //#region routing service installation
 

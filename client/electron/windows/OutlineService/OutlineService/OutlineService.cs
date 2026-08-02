@@ -46,6 +46,10 @@ using Newtonsoft.Json;
  *  resetRouting: Restores the system's default routing.
  *    { action: "resetRouting"}
  *
+ *  enterLockdown: Blocks all IPv4/IPv6 traffic (kill switch). Used when the VPN drops unexpectedly
+ *  so traffic cannot leak through the ISP while Outline is supposed to be protecting the device.
+ *    { action: "enterLockdown"}
+ *
  * Response
  *
  *  { statusCode:<int>, action:<string>, errorMessage?:<string>, gatewayAdapterIndex?:<string> }
@@ -71,6 +75,7 @@ namespace OutlineService
 
         private const string ACTION_CONFIGURE_ROUTING = "configureRouting";
         private const string ACTION_RESET_ROUTING = "resetRouting";
+        private const string ACTION_ENTER_LOCKDOWN = "enterLockdown";
         private const string ACTION_STATUS_CHANGED = "statusChanged";
         private const string PARAM_PROXY_IP = "proxyIp";
         private const string PARAM_AUTO_CONNECT = "isAutoConnect";
@@ -340,6 +345,9 @@ namespace OutlineService
                 case ACTION_RESET_ROUTING:
                     ResetRouting(proxyIp, gatewayInterfaceIndex);
                     break;
+                case ACTION_ENTER_LOCKDOWN:
+                    EnterLockdown();
+                    break;
                 default:
                     eventLog.WriteEntry($"Received invalid request: {request.action}", EventLogEntryType.Error);
                     break;
@@ -395,6 +403,14 @@ namespace OutlineService
         //       the reconnecting state; the system is leaking traffic.
         public void ConfigureRouting(string proxyIp, bool isAutoConnect)
         {
+            // Clear any prior kill-switch lockdown (loopback blackholes) before
+            // installing TAP redirects.
+            try
+            {
+                StartRoutingIpv4();
+            }
+            catch (Exception) {}
+
             try
             {
                 StartSmartDnsBlock();
@@ -515,6 +531,74 @@ namespace OutlineService
             catch (Exception e)
             {
                 eventLog.WriteEntry($"failed to stop smartdnsblock: {e.Message}",
+                    EventLogEntryType.Warning);
+            }
+        }
+
+        // Blocks IPv4 and IPv6 traffic by routing it to the loopback interfaces.
+        // Used by the Windows kill switch when the VPN tunnel drops unexpectedly so
+        // traffic cannot leak through the system default gateway / ISP.
+        //
+        // This is largely idempotent and clears VPN-specific state (proxy route,
+        // TAP redirect, LAN bypass) while leaving the blackhole routes in place
+        // until #ConfigureRouting or #ResetRouting is called.
+        public void EnterLockdown()
+        {
+            try
+            {
+                RemoveIpv4TapRedirect();
+                eventLog.WriteEntry("removed IPv4 TAP redirect for lockdown");
+            }
+            catch (Exception e)
+            {
+                eventLog.WriteEntry($"failed to remove IPv4 TAP redirect for lockdown: {e.Message}",
+                    EventLogEntryType.Error);
+            }
+
+            try
+            {
+                StopRoutingIpv4();
+                eventLog.WriteEntry("IPv4 traffic blocked (lockdown)");
+            }
+            catch (Exception e)
+            {
+                eventLog.WriteEntry($"failed to block IPv4 traffic for lockdown: {e.Message}",
+                    EventLogEntryType.Error);
+            }
+
+            try
+            {
+                StopRoutingIpv6();
+                eventLog.WriteEntry("IPv6 traffic blocked (lockdown)");
+            }
+            catch (Exception e)
+            {
+                eventLog.WriteEntry($"failed to block IPv6 traffic for lockdown: {e.Message}",
+                    EventLogEntryType.Error);
+            }
+
+            this.proxyIp = null;
+
+            try
+            {
+                RemoveReservedSubnetBypass();
+                eventLog.WriteEntry("deleted LAN bypass routes for lockdown");
+            }
+            catch (Exception e)
+            {
+                eventLog.WriteEntry($"failed to delete LAN bypass routes for lockdown: {e.Message}",
+                    EventLogEntryType.Error);
+            }
+            this.gatewayIp = null;
+
+            try
+            {
+                StopSmartDnsBlock();
+                eventLog.WriteEntry("stopped smartdnsblock for lockdown");
+            }
+            catch (Exception e)
+            {
+                eventLog.WriteEntry($"failed to stop smartdnsblock for lockdown: {e.Message}",
                     EventLogEntryType.Warning);
             }
         }
