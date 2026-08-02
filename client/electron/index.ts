@@ -36,7 +36,12 @@ import {autoUpdater} from 'electron-updater';
 import {lookupIp} from './connectivity';
 import {invokeGoMethod} from './go_plugin';
 import {GoVpnTunnel} from './go_vpn_tunnel';
-import {installRoutingServices, RoutingDaemon} from './routing_service';
+import {KillSwitchStore} from './kill_switch_store';
+import {
+  installRoutingServices,
+  releaseKillSwitchLockdown,
+  RoutingDaemon,
+} from './routing_service';
 import {TunnelStore} from './tunnel_store';
 import {closeVpn, establishVpn, onVpnStateChanged} from './vpn_service';
 import {VpnTunnel} from './vpn_tunnel';
@@ -62,6 +67,7 @@ const IS_WINDOWS = os.platform() === 'win32';
 // Used for the auto-connect feature. There will be a tunnel in store
 // if the user was connected at shutdown.
 const tunnelStore = new TunnelStore(app.getPath('userData'));
+const killSwitchStore = new KillSwitchStore(app.getPath('userData'));
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -69,6 +75,9 @@ let mainWindow: Electron.BrowserWindow | null;
 let tray: Tray;
 
 let isAppQuitting = false;
+// Windows-only: when enabled, unexpected VPN drops enter network lockdown
+// instead of restoring ISP connectivity.
+let killSwitchEnabled = false;
 // Default to English strings in case we fail to retrieve them from the renderer process.
 let localizedStrings: {[key: string]: string} = {
   'tray-open-window': 'Open',
@@ -359,7 +368,12 @@ async function createVpnTunnel(
   }
   const hostIp = await lookupIp(host);
   const routing = new RoutingDaemon(hostIp || '', isAutoConnect);
-  const tunnel = new GoVpnTunnel(routing, request.id, request.client);
+  const tunnel = new GoVpnTunnel(
+    routing,
+    request.id,
+    request.client,
+    IS_WINDOWS && killSwitchEnabled
+  );
   routing.onNetworkChange = tunnel.networkChanged.bind(tunnel);
   return tunnel;
 }
@@ -410,6 +424,8 @@ async function startVpn(request: StartRequestJson, isAutoConnect: boolean) {
 }
 
 // Invoked by both the stop-proxying event and quit handler.
+// Always restores internet (releases kill switch lockdown) — this path is
+// intentional user/app action, not an unexpected drop.
 async function stopVpn() {
   if (IS_LINUX) {
     await Promise.all([closeVpn(), tearDownAutoLaunch()]);
@@ -421,7 +437,7 @@ async function stopVpn() {
   }
 
   const onceDisconnected = currentTunnel.onceDisconnected;
-  void currentTunnel.disconnect();
+  void currentTunnel.disconnect({releaseKillSwitch: true});
   await tearDownAutoLaunch();
   await onceDisconnected;
 }
@@ -465,6 +481,15 @@ function main() {
     setupTray();
     // TODO(fortuna): Start the app with the window hidden on auto-start?
     setupWindow();
+
+    if (IS_WINDOWS) {
+      try {
+        killSwitchEnabled = await killSwitchStore.load();
+        console.info(`kill switch enabled: ${killSwitchEnabled}`);
+      } catch (e) {
+        console.error('Failed to load kill switch preference:', e);
+      }
+    }
 
     if (IS_LINUX) {
       await onVpnStateChanged(setUiTunnelStatus);
@@ -596,6 +621,31 @@ function main() {
       return errors.ErrorCode.UNEXPECTED;
     }
   });
+
+  // Windows kill switch preference. When disabled while lockdown is active and
+  // no tunnel is running, restore system routing so the user regains internet.
+  ipcMain.handle(
+    'outline-ipc-set-kill-switch',
+    async (_, enabled: boolean): Promise<void> => {
+      if (!IS_WINDOWS) {
+        return;
+      }
+      killSwitchEnabled = !!enabled;
+      try {
+        await killSwitchStore.save(killSwitchEnabled);
+      } catch (e) {
+        console.error('Failed to persist kill switch preference:', e);
+      }
+      if (!killSwitchEnabled && !currentTunnel) {
+        try {
+          await releaseKillSwitchLockdown();
+        } catch (e) {
+          // OutlineService may not be installed/running yet.
+          console.warn('Failed to release kill switch lockdown:', e);
+        }
+      }
+    }
+  );
 
   // TODO: refactor channel name and namespace to a constant
   ipcMain.on('outline-ipc-quit-app', quitApp);

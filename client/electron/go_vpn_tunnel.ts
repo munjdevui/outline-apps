@@ -19,7 +19,7 @@ import {powerMonitor} from 'electron';
 import {pathToEmbeddedTun2socksBinary} from './app_paths';
 import {checkUDPConnectivity, checkUDPConnectivityWindows} from './go_helpers';
 import {ChildProcessHelper, ProcessTerminatedSignalError} from './process';
-import {RoutingDaemon} from './routing_service';
+import {RoutingDaemon, RoutingStopOptions} from './routing_service';
 import {VpnTunnel} from './vpn_tunnel';
 import {TunnelStatus} from '../web/app/outline_server_repository/vpn';
 
@@ -51,6 +51,7 @@ export class GoVpnTunnel implements VpnTunnel {
 
   // See #resumeListener.
   private disconnected = false;
+  private disconnecting = false;
 
   private isUdpEnabled = false;
   private gatewayAdapterIndex?: string;
@@ -65,7 +66,8 @@ export class GoVpnTunnel implements VpnTunnel {
   constructor(
     private readonly routing: RoutingDaemon,
     readonly keyId: string,
-    readonly clientConfig: string
+    readonly clientConfig: string,
+    private readonly killSwitchEnabled: boolean = false
   ) {
     this.tun2socks = new GoTun2socks(keyId);
 
@@ -98,9 +100,12 @@ export class GoVpnTunnel implements VpnTunnel {
     }
 
     // Disconnect the tunnel if the routing service disconnects unexpectedly.
+    // With the Windows kill switch enabled, keep traffic blocked (lockdown).
     this.routing.onceDisconnected
       .then(async () => {
-        await this.disconnect();
+        await this.disconnect({
+          releaseKillSwitch: !this.killSwitchEnabled,
+        });
       })
       .catch(e => {
         console.error('error in routing service disconnection:', e);
@@ -210,10 +215,11 @@ export class GoVpnTunnel implements VpnTunnel {
   }
 
   // Use #onceDisconnected to be notified when the tunnel terminates.
-  async disconnect() {
-    if (this.disconnected) {
+  async disconnect(options: RoutingStopOptions = {}) {
+    if (this.disconnected || this.disconnecting) {
       return;
     }
+    this.disconnecting = true;
 
     if (IS_WINDOWS) {
       powerMonitor.removeListener('suspend', this.suspendListener.bind(this));
@@ -229,7 +235,10 @@ export class GoVpnTunnel implements VpnTunnel {
     }
 
     try {
-      await this.routing.stop();
+      // Default: restore system routing (intentional disconnect / quit).
+      // Callers pass releaseKillSwitch:false for unexpected drops when the
+      // Windows kill switch is enabled.
+      await this.routing.stop(options);
     } catch (e) {
       // This can happen for several reasons, e.g. the daemon may have stopped while we were
       // connected.

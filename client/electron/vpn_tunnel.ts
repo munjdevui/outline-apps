@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {RoutingStopOptions} from './routing_service';
 import {TunnelStatus} from '../web/app/outline_server_repository/vpn';
 
 // Represents a VPN tunnel to a proxy server.
@@ -21,7 +22,9 @@ export interface VpnTunnel {
   connect(checkProxyConnectivity: boolean): Promise<void>;
 
   // Stops tunneling and tears down the VPN.
-  disconnect(): Promise<void>;
+  // When releaseKillSwitch is false on Windows, the routing service enters
+  // lockdown instead of restoring internet access.
+  disconnect(options?: RoutingStopOptions): Promise<void>;
 
   // Callback to notify the tunnel about a network connectivity change.
   networkChanged(status: TunnelStatus): void;

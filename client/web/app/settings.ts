@@ -22,6 +22,8 @@ export enum SettingsKey {
   AUTO_CONNECT_DIALOG_DISMISSED = 'auto-connect-dialog-dismissed',
   PRIVACY_ACK = 'privacy-ack',
   APPEARANCE = 'appearance',
+  /** Windows-only: block internet if the VPN drops unexpectedly. */
+  KILL_SWITCH = 'kill-switch',
 }
 
 // Theme options
