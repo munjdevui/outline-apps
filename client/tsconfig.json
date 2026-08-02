@@ -21,7 +21,8 @@
   "exclude": [
     "*.cjs",
     "*.js",
-    "*.mjs"
+    "*.mjs",
+    "**/*.spec.ts"
   ],
   "include": [
     "electron",
